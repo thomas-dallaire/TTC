@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+.background {
+    fill: none;
+    pointer-events: all;
+    stroke: #000;
+}
+
+path {
+    fill: white;
+    stroke: #000;
+    stroke-width: 0.25px;
+    stroke-linejoin: round;
+}
+
+.container {
+    height: 600px;
+    width: 880px;
+    border:1px solid #ccc;
+    position: absolute;
+}
+
+.containerCheckList {
+    height: 600px;
+    width: 300px;
+    border:1px solid #ccc;
+    overflow-y: scroll;
+    overflow-x: hidden;
+    position: absolute;
+    left: 900px;
+}
+
+</style>
+
+<body>
+
+<link rel="stylesheet" type="text/css" href="stylesheets/d3.slider.css" media="screen" />
+<script src="http://d3js.org/d3.v3.min.js"></script>
+<script src="http://d3js.org/topojson.v1.min.js"></script>
+
+<div class=container id="svgMap"> <svg width=880px height=600px></svg> </div>
+<div class=containerCheckList id="svgCheckboxList"> <svg width=300px height=3850px></svg> </div>
+
+<script> 
+var width = 1300,
+    height = 600,
+    scale = 90000;
+    
+var svg = d3.select("#svgMap")
+    .selectAll("svg");
+    
+var svgCheckboxList = d3.select("#svgCheckboxList")
+    .selectAll("svg");
+
+//set the parameters for the geographic projection
+var projection = d3.geo.mercator()
+    .scale(scale)
+    .center([-79.496258294,43.649789604])
+    .translate([250, 450]);
+var path = d3.geo.path()
+    .projection(projection);
+
+var vehicleLayer = svg.append("svg")
+    .attr("width", width)
+    .attr("height", height)
+    .attr("fill", "none");    
+    
+/*
+var imgs = svg.selectAll("image").data([0]);
+                imgs.enter()
+                .append("svg:image")
+                .attr("xlink:href", "toronto.png")
+                .attr("x", "2")
+                .attr("y", "2")
+                .attr("width", width-2)
+                .attr("height", height-2);
+*/
+//load the map
+
+d3.json("toronto.trim.topo.json", function(error, topology){
+    if (error) return console.error(error);
+    
+    var subunits = topojson.feature(topology, topology.objects.toronto);
+
+    svg.append("path")
+        .datum(subunits)
+        .attr("stName", function(d) { console.log(d.properties); })
+        .attr("d", path)
+        .on("mouseover", function(d) { 
+            var streetLabel = svg.append("text")
+                .attr("id", "streetLabel")
+                .attr("x", (d3.event.pageX) + "px")
+                .attr("y", (d3.event.pageY) + "px")
+                .attr("font-size",5)
+                .attr("fill","red")
+                .text(d.stName);
+            console.log(d.stName);
+        })
+        .on("click", clicked);
+});
+
+//TTC route list xml file
+var url = 'http://webservices.nextbus.com/service/publicXMLFeed?command=routeList&a=ttc';
+var routes = new Array;
+
+d3.xml(url).get(function(error, xml) {
+    var inputs = d3.select(xml).selectAll('route');
+    var checkboxHeight = 40;
+    
+    svgCheckboxList.append("text")
+            .attr("x", 25)
+            .attr("y", 35)
+            .attr("font-size",24)
+            .attr("fill","black")
+            .text("Select routes to display");
+            
+    //extract the route 'tags'
+    for (i = 0; i < inputs[0].length; i++) {
+        //routes.push(inputs[0][i].getAttribute("tag"));
+        
+        //add checkboxes for route
+        var checkBox = svgCheckboxList.append("foreignObject")
+            .attr("x", 15)
+            .attr("y", checkboxHeight)
+            .attr("route", inputs[0][i].getAttribute("tag"))
+            .attr("width", 100)
+            .attr("height", 100)
+            .on("click", function(d, i){
+                routes.push(this.getAttribute("route"));
+                update();
+            })
+            .append("xhtml:body")
+            .html("<form><input type=checkbox id=check /></form>");
+        svgCheckboxList.append("text")
+            .attr("x", 50)
+            .attr("y", checkboxHeight+21.5)
+            .attr("font-size",12)
+            .attr("fill","black")
+            .text(inputs[0][i].getAttribute("title"));
+        
+        checkboxHeight = checkboxHeight + 20;
+    }    
+});
+
+var invertvalTimer=setInterval(function () {updateVehicles()}, 5000);
+
+function update() {
+    
+    svg.selectAll("circle").remove();
+        
+    for (i = 0; i < routes.length; i++) {
+        //pull the xml file to get the list of stops for each route
+        url = 'http://webservices.nextbus.com/service/publicXMLFeed?command=routeConfig&a=ttc&r=' + routes[i];
+        d3.xml(url).get(function(error, xml) {
+            var inputs = d3.select(xml).selectAll('stop')
+                //plot the location of each stop
+                
+                for (i = 0; i < inputs[0].length/2; i++) { 
+            
+                    var lon = inputs[0][i].getAttribute("lon");
+                    var lat = inputs[0][i].getAttribute("lat");
+                
+                    var coordinates = projection([lon,lat])
+                
+                    svg.append("circle")
+                        .attr("cx", coordinates[0])
+                        .attr("cy", coordinates[1])
+                        .attr("r", scale/200000)
+                        .attr("fill", "red");
+                }
+        });
+    };
+    updateVehicles();
+};
+
+function updateVehicles() {
+vehicleLayer.selectAll("circle").remove();
+for (i = 0; i < routes.length; i++) {
+        //pull the xml file to get the current location of each vehicle on each route
+        url = 'http://webservices.nextbus.com/service/publicXMLFeed?command=vehicleLocations&a=ttc&r=' + routes[i] + '&t=0';
+        d3.xml(url).get(function(error, xml) {
+            var inputs = d3.select(xml).selectAll('vehicle')
+                
+            //plot the location of each vehicle
+            for (j = 0; j < inputs[0].length; j++) { 
+                    
+                lon = inputs[0][j].getAttribute("lon");
+                lat = inputs[0][j].getAttribute("lat");
+                
+                coordinates = projection([lon,lat])
+                    vehicleLayer.append("circle")
+                        .attr("cx", coordinates[0])
+                        .attr("cy", coordinates[1])
+                        .attr("r", scale/70000)
+                        .attr("fill", "blue")
+                        .on("mouseover", function(d) { 
+                            var streetLabel = svg.append("text")
+                            .attr("id", "streetLabel")
+                            .attr("x", (d3.event.pageX) + "px")
+                            .attr("y", (d3.event.pageY) + "px")
+                            .attr("font-size",12)
+                            .attr("fill","red")
+                            .text("Vehicle " + inputs[0][j].getAttribute("id") + " on route " + inputs[0][j].getAttribute("routeTag"));
+                        });
+                }
+            });
+        };
+}
+
+function clicked(d) {
+    //if not selected zoom, else return to full view
+    //if (active.node() === this) return reset();
+    //active.classed("active", false);
+    //active = d3.select(this).classed("active", true);
+    
+    //d3.select(this).style("fill","#fff");
+    
+    //set the "zoom box" to use -- bounds is used to restrict the zoom to a full province view
+    var bounds = path.bounds(d),
+        dx = d3.event.pageX/3,
+        dy = d3.event.pageY/3,
+        x = (d3.event.pageX),
+        y = (d3.event.pageY);
+    //set global scale and movement parameters based on the click position 
+    scale = .95 / Math.max(dx / width, dy / height),
+    translate = [width / 2 - scale * x, height - scale * y];
+    //move the map to create a zoom effect
+    svg.transition()
+        .duration(600)
+        .style("stroke-width", 1.5 / scale + "px")
+        .attr("transform", "translate(" + translate + ")scale(" + scale + ")");
+    //move the city circles to create a zoom effect
+    /*
+    svg.selectAll("circle")
+        .transition()
+        .duration(600)
+        .attr("transform", "translate(" + translate + ")scale(" + scale + ")");
+    */
+}
+
+</script>
